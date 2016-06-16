@@ -1,4 +1,5 @@
 #!/usr/bin/env fish
+# Oh My Fish installer. See `install --help` for usage.
 #
 # USAGE
 #   #1: curl -L https://github.com/oh-my-fish/oh-my-fish/raw/master/bin/install | fish
@@ -6,51 +7,102 @@
 #   #3: env OMF_CONFIG=~/.omf curl -L https://github.com/oh-my-fish/oh-my-fish/raw/master/bin/install | fish
 #
 # ENV
-#   XDG_DATA_HOME       Base directory (~/.local/share)
-#   XDG_CONFIG_HOME     Base configuration directory (~/.config)
-#
-#   - See XDG Base Directory Specification:
-#   - https://standards.freedesktop.org/basedir-spec/basedir-spec-latest.html
-#
-#   FISH_CONFIG       Fish shell configuration file
-#
-#   OMF_PATH          Oh My Fish installation directory
-#   OMF_CONFIG        Oh My Fish configuration directory
-#
 #   OMF_REPO_URI      Oh My Fish source git repository
 #   OMF_REPO_BRANCH   Oh My Fish source repository branch
-
-
-set -q XDG_DATA_HOME;   or set XDG_DATA_HOME "$HOME/.local/share"
-set -q XDG_CONFIG_HOME; or set XDG_CONFIG_HOME "$HOME/.config"
-
-set -q FISH_CONFIG;     or set FISH_CONFIG "$XDG_CONFIG_HOME/fish"
-
-set -q OMF_PATH;        or set OMF_PATH "$XDG_DATA_HOME/omf"
-set -q OMF_CONFIG;      or set OMF_CONFIG "$XDG_CONFIG_HOME/omf"
 
 set -q OMF_REPO_URI;    or set OMF_REPO_URI "https://github.com/oh-my-fish/oh-my-fish"
 set -q OMF_REPO_BRANCH; or set OMF_REPO_BRANCH "master"
 
 set OMF_FISH_MIN_VER 2 2 0
 
-function available -a name
-  type "$name" >/dev/null 2>&1
+
+function main
+  # Set default settings
+  set -q XDG_DATA_HOME
+    and set -g PREFIX "$XDG_DATA_HOME"
+    or set -g PREFIX "$HOME/.local/share"
+
+  set -q XDG_CONFIG_HOME
+    and set -g CONFIG_PATH "$XDG_CONFIG_HOME"
+    or set -g CONFIG_PATH "$HOME/.config"
+
+  set -g OMF_CONFIG "$CONFIG_PATH/omf"
+  set -g FISH_CONFIG "$CONFIG_PATH/fish"
+
+  # Parse args
+  while set -q argv[1]
+    switch "$argv[1]"
+      case --help -h '/?'
+        echo "Usage: install [options]
+  Install Oh My Fish
+
+Options:
+  --config=<path>         Put config in a specific path (default is $OMF_CONFIG)
+  --help                  Show this help message
+  --offline               Offline install
+  --prefix=<path>         Install to a specific path (default is $PREFIX)
+  --yes, -y               Disable interactive questions
+"
+        return 0
+
+      case '--config=*'
+        echo "$argv[1]" | cut -d= -f2 | read -g OMF_CONFIG
+
+      case --offline
+        set -g OFFLINE
+
+      case '--prefix=*'
+        echo "$argv[1]" | cut -d= -f2 | read -g PREFIX
+
+      case --yes -y
+        set -g NONINTERACTIVE
+    end
+    set -e argv[1]
+  end
+
+  # Noninteractive
+  isatty
+    or set -g NONINTERACTIVE
+
+  set -g OMF_PATH "$PREFIX/omf"
+
+  if test -d "$OMF_PATH"
+    report error "Aborting: Existing installation detected at $OMF_PATH."
+  end
+
+  if not type -q git
+    report error "Aborting: Installation requires Git."
+  end
+
+  if not fish_version_compatible
+    set -l minimum_version_string (echo $OMF_FISH_MIN_VER | sed 's/ /./g')
+    report error "Aborting: Detected fish $version, but Oh My Fish requires fish $minimum_version_string or greater."
+  end
+
+  install-omf
+    and create-config
+    or report error "Oh My Fish installation failed.\n\nIf you think that it's a bug, please open an\nissue with the complete installation log here:\n\nhttp://github.com/oh-my-fish/oh-my-fish/issues"
+
+  report success "Installation successful!"
+  set -q CI; or exec fish < /dev/tty
+  return 0
 end
 
 function report -a what message
   switch $what
-  case 'progress'
-    set_color yellow
+  case 'info'
+    set_color blue
   case 'success'
     set_color green
   case 'error'
     set_color red
-    printf "$message\n"
+    printf "error: $message\n"
+    set_color normal
     exit 1
   end
 
   printf "$message\n"
+  set_color normal
 end
 
 function fish_version_compatible
@@ -62,7 +114,7 @@ function fish_version_compatible
 end
 
 
-function backup_file -a file_path
+function backup-file -a file_path
   test -e "$file_path"; or return 1
 
   set -l path (dirname $file_path)
@@ -82,13 +134,28 @@ function backup_file -a file_path
   return 0
 end
 
-function install_omf
+function install-omf
+  report progress "Installing Oh My Fish to $OMF_PATH..."
+
+  # Prepare paths
+  mkdir -p "$PREFIX"
+
   # Grant repository URL ends with .git
   set git_uri (echo $OMF_REPO_URI | sed 's/\.git//').git
 
-  report progress "Cloning $OMF_REPO_BRANCH from $git_uri..."
-  if not git clone -q --depth 1 -b $OMF_REPO_BRANCH $git_uri "$OMF_PATH"
-    report error "Error cloning repository!"
+  if set -q OFFLINE
+    dirname (dirname (status -f)) | read local_repo
+
+    if not test -d "$local_repo"
+      report error "Could not access local installation"
+    end
+
+    cp -r "$local_repo" "$OMF_PATH"
+  else
+    report progress "Cloning $OMF_REPO_BRANCH from $git_uri..."
+    if not git clone -q --depth 1 -b $OMF_REPO_BRANCH $git_uri "$OMF_PATH"
+      report error "Error cloning repository!"
+    end
   end
 
   set git_upstream (git --git-dir "$OMF_PATH/.git" --work-tree "$OMF_PATH" config remote.upstream.url)
@@ -98,24 +165,26 @@ function install_omf
   else
     git --git-dir "$OMF_PATH/.git" --work-tree "$OMF_PATH" remote set-url upstream $git_uri
   end
+end
 
+function create-config
   set fish_config_file "$FISH_CONFIG/config.fish"
 
-  backup_file "$FISH_CONFIG/config.fish";
+  backup-file "$fish_config_file"
     or mkdir -p "$FISH_CONFIG"
 
-  backup_file "$FISH_CONFIG/functions/fish_prompt.fish"
+  backup-file "$FISH_CONFIG/functions/fish_prompt.fish"
 
   report progress "Adding startup code to fish config file..."
 
   set template "templates/config.fish"
   set replacements "s|{{OMF_CONFIG}}|$OMF_CONFIG|"
 
-  if test "$OMF_CONFIG" != "$XDG_CONFIG_HOME/omf"
+  if test "$OMF_CONFIG" != "$CONFIG_PATH/omf"
     set replacements "$replacements;s|#set|set|"
   end
 
-  sed  "$replacements" "$OMF_PATH/$template" > "$fish_config_file"
+  sed "$replacements" "$OMF_PATH/$template" > "$fish_config_file"
 
   report progress "Building Oh My Fish configuration..."
 
@@ -129,30 +198,9 @@ function install_omf
   fish -c "omf install"
 end
 
-function main
-  report progress "Installing Oh My Fish to $OMF_PATH..."
-
-  if test -d "$OMF_PATH"
-    report error "Aborting: Existing installation detected."
-  end
-
-  if not available git
-    report error "Aborting: Installation requires Git."
-  end
-
-  if not fish_version_compatible
-    set -l minimum_version_string (echo $OMF_FISH_MIN_VER | sed 's/ /./g')
-    report error "Aborting: Detected fish $version, but Oh My Fish requires fish $minimum_version_string or greater."
-  end
-
-  if install_omf
-    report success "Installation successful!"
-    set -q CI; or exec fish < /dev/tty
-  else
-    report error "Oh My Fish installation failed.\n\nIf you think that it's a bug, please open an\nissue with the complete installation log here:\n\nhttp://github.com/oh-my-fish/oh-my-fish/issues"
-  end
-
-  exit 0
+# Silent wrapper around set_color
+function set_color
+  builtin set_color $argv ^ /dev/null
 end
 
-main
+main $argv

@@ -1,4 +1,4 @@
-FROM ohmyfish/fish:2.2.0
+FROM ohmyfish/fish:2.3.0
 
 COPY . /src/oh-my-fish
 
@@ -9,6 +9,6 @@ ENV CI WORKAROUND
 ARG OMF_REPO_BRANCH=master
 ARG OMF_REPO_URI=https://github.com/oh-my-fish/oh-my-fish
 
-RUN fish /src/oh-my-fish/bin/install
+RUN fish /src/oh-my-fish/bin/install --offline
 
 WORKDIR /root/.local/share/omf
