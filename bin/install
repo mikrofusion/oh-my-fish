@@ -147,7 +147,7 @@ function main
 
   if install_omf
     report success "Installation successful!"
-    set -q CI; or exec fish < /dev/tty
+    set -q CI;
   else
     report error "Oh My Fish installation failed.\n\nIf you think that it's a bug, please open an\nissue with the complete installation log here:\n\nhttp://github.com/oh-my-fish/oh-my-fish/issues"
   end
